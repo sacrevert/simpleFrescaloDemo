@@ -1,0 +1,139 @@
+---
+title: An introduction to the use of Frescalo for time-trends in species occurrence
+  data collected with variable effort
+author: "Dr Oli L. Pescott"
+date: "21st May 2023"
+output: pdf_document
+---
+```{r message=FALSE, warning=FALSE, include=FALSE}
+if (!"devtools" %in% installed.packages()) install.packages('devtools')
+library(devtools)
+if (!"occAssess" %in% installed.packages()) devtools::install_github("https://github.com/robboyd/occAssess")
+if (!"sparta" %in% installed.packages()) devtools::install_github("https://github.com/BiologicalRecordsCentre/sparta")
+library(sparta)
+library(occAssess)
+library(BRCmap)
+library(ggplot2)
+library(here)
+library(reshape2)
+library(lubridate)
+library(mgcv)
+source(here('scripts/date2timeperiod.R'))
+load(here("data/britishLichensTenPercentEg.Rdata"))
+```
+# Introducton
+For this example we will use a random ten percent sample of the holdings of the British Lichen Society (BLS). These data were first preprocessed to a set of taxa that were deemed appropriate for long-term trend analyses in consultation with the BLS (for which thanks are due to Dr Janet Simkin, Newcastle University). This process consisted of two main steps: (1) cleaning the dataset to remove any non-lichen data (including licheniicolous fungi); (2) identifying taxa that were considered to be have been very unevenly recorded through time due to taxonomic change. This second activity normally results in the creation of trends for some species aggregates, rather than for entities at finer taxonomic scales (which would certainly shows declines or increases indexing taxonomic change and recorder attention rather than any ecological phenomena). 
+
+_Note that these steps are **not** peculiar to Frescalo, and should be considered for any analysis of biological records, especially those evaluating trends over >1 decade._
+
+# Required data
+These are the final taxa to be modelled. Each record has a hectad location (as we will be modelling time-trends at the hectad scale, between broad, multi-year date-classes to minimise biases at finer scales). Each record has a start and end date. Sometimes these are the same (i.e. the record was made on a single day), but often they will be different, especially in older data. Where records are not resolved to a single day, and are multi-year (e.g. only resolved to an Atlas-recording period), then we will have to take this into consideration for whatever multi-year time periods we decided to model.
+
+```{r message=TRUE, warning=FALSE, include=TRUE}
+head(dataTenPercent)
+tail(dataTenPercent)
+numRecs <- nrow(dataTenPercent)
+## Note that all variables are currently in character format
+str(dataTenPercent)
+## Some vaguely dated records
+head(dataTenPercent[!(dataTenPercent$Start.Date==dataTenPercent$End.Date),], n = 10)
+## How many?
+nrow(dataTenPercent[!(dataTenPercent$Start.Date==dataTenPercent$End.Date),])
+## What proportion?
+nrow(dataTenPercent[!(dataTenPercent$Start.Date==dataTenPercent$End.Date),])/numRecs # 23%, so, quite a few!
+```
+
+# Prepare things for sparta::frescalo()
+```{r message=TRUE, warning=FALSE, include=TRUE}
+dataTenPercent <- dataTenPercent[order(dataTenPercent$finalSpp, dataTenPercent$Start.Date),] # housekeeping
+dataTenPercent$Start.Date <- as.Date(dataTenPercent$Start.Date, format = "%d/%m/%Y")
+dataTenPercent$End.Date <- as.Date(dataTenPercent$End.Date, format = "%d/%m/%Y")
+yrRanges <- dataTenPercent[,c("Start.Date", "End.Date")] ## dates for each species/hectad occurrence records
+## These are the time periods that we will use for the first analysis
+time_periods <- data.frame(start = c(1600,1960,2000), end = c(1959,1999,2023))
+time_periods
+## Classify species/hectad occurrence records using convenience function date2timeperiod()
+dataTenPercent$periods <- date2timeperiod(Date = yrRanges, time_periods = time_periods)
+## Remove unclassified species/hectad occurrences
+dataTenPercent_atlas <- dataTenPercent[!is.na(dataTenPercent$periods),]
+head(dataTenPercent_atlas, n = 25)
+```
+Note that here we have dropped species/hectad occurrences that were not unambiguously nested within one of our specified time periods. Not all users will wish to do this, it depends on nature of the ambiguous records and what can be assumed about them. For example, in some cases there may be external information that permits the assumption that some multi-year records spanning the desired time periods can be safely nested into the first time period under consideration. For example, because early records were arbitrarily given some late end date based on, e.g., the date of death of a recorder, or the publication of some Atlas. Such decisions, however, should always be evidence-based and clearly stated in reports and metadata.
+
+# Specify other arguments for sparta::frescalo() and run
+All the arguments here simply relate to either reading in information (the Frescalo executable, the weights file), or saving information to disc in sensible locations.
+```{r message=TRUE, warning=FALSE, include=TRUE}
+dateType <- "atlasDCs" # date class label for analysis
+country <- "britainEg" # country label for analysis
+sinkDirStem = 'outputs/' # generic output directory
+folder <- gsub(" ", "_", paste(country, dateType, Sys.Date(), sep="_")) # specific output folder
+## Read in the weights. Note that the names of the sites in the weights file need to match those site names used in the dataset (here, standard hectad labels)
+britWeights <- read.csv(here("data/britishFresWeights_Jan2022_v0.csv")); britWeights <- britWeights[,c(2:4)] # crop row names
+```
+```{r message=TRUE, eval = FALSE, warning=FALSE, include=TRUE}
+## Run frescalo using sparta
+## NOT RUN
+fresOut <- sparta::frescalo(Data = dataTenPercent_atlas, # dataset
+                            time_periods = time_periods, # multi-year time periods for analysis
+                            sinkdir = paste0(sinkDirStem, folder), # where to save frescalo results files
+                            Fres_weights = britWeights, # relevant weights file
+                            site_col = "Hectad", # sites for analysis
+                            sp_col = "finalSpp", # taxa for analysis
+                            start_col = "Start.Date", # record start date
+                            end_col = "End.Date", # record end date
+                            frespath = 'C:\\analyses\\Frescalo_3a_windows.exe', # frescalo executable
+                            phi = 0.74, # target scaling parameter for local species frequency curves (0.74 is default, warning messages will suggest changes)
+                            alpha = 0.27) # proportion of species in local frequency curves to use as benchmarks (generally changing this has little to no impact on trends)
+```
+# Another set of time-periods
+```{r message=FALSE, warning=FALSE, include=TRUE}
+dateType <- "quinquen"
+time_periodsQQ = data.frame(start = seq(from = 1960, to = 2020, by = 5), end = seq(from = 1964, to = 2025, by = 5))
+time_periodsQQ
+dataTenPercent$periods <- date2timeperiod(Date = yrRanges, time_periods = time_periodsQQ)
+dataTenPercent_quinquen <- dataTenPercent[!is.na(dataTenPercent$periods),]
+head(dataTenPercent_quinquen)
+```
+```{r message=TRUE, eval = FALSE, warning=FALSE, include=TRUE}
+## Run frescalo again
+## NOT RUN
+fresOut2 <- sparta::frescalo(Data = dataTenPercent_quinquen, # new dataset
+                            time_periods = time_periodsQQ, # 5-year time periods for analysis
+                            sinkdir = paste0(sinkDirStem, folder), # where to save frescalo results files
+                            Fres_weights = britWeights, # relevant weights file
+                            site_col = "Hectad", # sites for analysis
+                            sp_col = "finalSpp", # taxa for analysis
+                            start_col = "Start.Date", # record start date
+                            end_col = "End.Date", # record end date
+                            frespath = 'C:\\analyses\\Frescalo_3a_windows.exe', # frescalo executable
+                            phi = 0.74, # target scaling parameter for local species frequency curves (0.74 is default, warning messages will suggest changes)
+                            alpha = 0.27) # proportion of species in local frequency curves to use as benchmarks (generally changing this has little to no impact on trends)
+```
+# Frescalo results
+There are a number of things that can be done with the results from Frescalo, both in terms of further analysis and presentation, but we do not have time to go into them here. However, we will look briefly at plotting the results.
+
+```{r message=FALSE, warning=FALSE, include=TRUE}
+# Read in the Trend file from the relevant frescalo output directory
+# Note that these plots could also be made using the `fresOut` or `fresout2` objects above
+dat <- read.csv(file = here("outputs/britainEg_atlasDCs_2023-05-22/frescalo_230522/Output/Trend.csv"))
+sppToPlot <- dat[dat$Species=="Pseudevernia furfuracea s. lat.",]
+plot(1,type='n',
+     ylim = c(-0.5,1.0),
+xlim = c(1959,2023), xlab = 'Year', ylab ='Relative index', 
+main = paste0(unique(sppToPlot$Species), " — Broad date-classes"), cex.main = 0.7, cex.lab = 0.7, cex.axis = 0.5)
+abline(h = 0, col = "grey5", lty = 1, lwd = 0.7)
+points(x = sppToPlot$Time, y = sppToPlot$TFactor, pch = 21, col = "black", cex = 0.8, bg = "white")
+arrows(x0 = sppToPlot$Time, x1 = sppToPlot$Time, y0 = sppToPlot$TFactor - sppToPlot$StDev, 
+       y1 = sppToPlot$TFactor + sppToPlot$StDev, length = 0, col = "black")
+# Same, but analysis using 5 year periods
+dat <- read.csv(file = here("outputs/britainEg_quinquen_2023-05-22/frescalo_230522/Output/Trend.csv"))
+sppToPlot <- dat[dat$Species=="Pseudevernia furfuracea s. lat.",]
+plot(1,type='n',
+     ylim = c(-0.5,2.0),
+xlim = c(1959,2023), xlab = 'Year', ylab ='Relative index', 
+main = paste0(unique(sppToPlot$Species), " — 5-year time periods"), cex.main = 0.7, cex.lab = 0.7, cex.axis = 0.5)
+abline(h = 0, col = "grey5", lty = 1, lwd = 0.7)
+points(x = sppToPlot$Time, y = sppToPlot$TFactor, pch = 21, col = "black", cex = 0.8, bg = "white")
+arrows(x0 = sppToPlot$Time, x1 = sppToPlot$Time, y0 = sppToPlot$TFactor - sppToPlot$StDev, 
+       y1 = sppToPlot$TFactor + sppToPlot$StDev, length = 0, col = "black")
+```
